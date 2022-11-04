@@ -30,8 +30,10 @@ executable thread-debugger
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
     build-depends:    base ^>=4.13.0.0
-                    , haskell-gi-base
+                    , containers
                     , gi-gtk
+                    , haskell-gi-base
+                    , transformers
     hs-source-dirs:   app
     default-language: Haskell2010
     ghc-options:
