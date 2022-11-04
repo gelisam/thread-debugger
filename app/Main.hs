@@ -62,6 +62,8 @@ main = do
     let entry = Entry
           { entryText
               = s
+          , entryGreyedOut
+              = False
           }
     insertEntry handle () i entry
 

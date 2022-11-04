@@ -7,6 +7,8 @@ import GHC.Generics (Generic)
 data Entry = Entry
   { entryText
       :: String
+  , entryGreyedOut
+      :: Bool
   }
   deriving Generic
 

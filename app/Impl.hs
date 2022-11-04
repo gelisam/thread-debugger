@@ -117,9 +117,13 @@ newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
           } <- getOrCreateWindowState' k
         n <- atomically $ length <$> readTVar labelsTVar
         let s = entryText entry
+        let g = entryGreyedOut entry
         let i' = if i < 0 then n else i
 
-        label <- new Gtk.Label [ #label := fromString s ]
+        label <- new Gtk.Label
+          [ #label := fromString s
+          , #sensitive := not g
+          ]
         _ <- on label #keyPressEvent (onEntryKeyPress handle k i)
         Gtk.listBoxInsert listBox label (fromIntegral i)
         #show label
@@ -136,7 +140,11 @@ newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
           labels <- atomically $ readTVar labelsTVar
           for_ (Seq.lookup i labels) $ \label -> do
             let s = entryText entry
-            set label [ #label := fromString s ]
+            let g = entryGreyedOut entry
+            set label
+              [ #label := fromString s
+              , #sensitive := not g
+              ]
 
   -- noop if there is no entry at that position
   let removeEntry :: k -> Int -> IO ()

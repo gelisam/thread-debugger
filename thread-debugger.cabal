@@ -28,7 +28,6 @@ executable thread-debugger
     other-modules:    Handle
                     , History
                     , Impl
-                    , Zipper
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
