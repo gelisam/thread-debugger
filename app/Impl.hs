@@ -46,7 +46,7 @@ newWindowState windowTitle onWindowClosed onWindowKeyPress = do
 
   listBox <- new Gtk.ListBox []
   #add scrolledWindow listBox
-  
+
   #showAll window
 
   labelsTVar <- newTVarIO Seq.empty
@@ -98,7 +98,7 @@ newHandle
   -> IO (Handle k)
 newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
   _ <- Gtk.init Nothing
-  
+
   globalTVar <- newTVarIO Map.empty
   let getOrCreateWindowState' :: k -> IO WindowState
       getOrCreateWindowState'
@@ -129,7 +129,7 @@ newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
         #show label
 
         atomically $ modifyTVar labelsTVar $ Seq.insertAt i' label
-  
+
   -- noop if there is no entry at that position
   let setEntry :: k -> Int -> Entry -> IO ()
       setEntry k i entry = do
