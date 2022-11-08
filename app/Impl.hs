@@ -1,7 +1,10 @@
-{-# LANGUAGE DeriveGeneric, NamedFieldPuns, OverloadedLabels, RecursiveDo, ScopedTypeVariables #-}
-module Impl (newHandle) where
+{-# LANGUAGE DeriveGeneric, LambdaCase, NamedFieldPuns, OverloadedLabels, ScopedTypeVariables #-}
+module Impl (newActor) where
 
-import Control.Concurrent.STM
+import Optics ((%), ix)
+import Optics.State.Operators ((%=))
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.State (StateT)
 import Data.Foldable (for_)
 import Data.GI.Base
 import Data.Map (Map)
@@ -9,13 +12,13 @@ import Data.Sequence (Seq)
 import Data.String (IsString(fromString))
 import GHC.Generics (Generic)
 import qualified GI.Gtk as Gtk
+import qualified Control.Monad.Trans.State as State
 import qualified Data.Sequence as Seq
 import qualified Data.Map as Map
 
-import Handle
+import Actor
+import Msg
 
-
-type GlobalState k = Map k WindowState
 
 data WindowState = WindowState
   { windowItself
@@ -23,7 +26,7 @@ data WindowState = WindowState
   , windowListBox
       :: Gtk.ListBox
   , windowLabels
-      :: TVar (Seq Gtk.Label)
+      :: Seq Gtk.Label
   }
   deriving Generic
 
@@ -49,15 +52,13 @@ newWindowState windowTitle onWindowClosed onWindowKeyPress = do
 
   #showAll window
 
-  labelsTVar <- newTVarIO Seq.empty
-
   pure $ WindowState
     { windowItself
         = window
     , windowListBox
         = listBox
     , windowLabels
-        = labelsTVar
+        = Seq.empty
     }
 
 getOrCreateWindowState
@@ -68,54 +69,49 @@ getOrCreateWindowState
        -- ^ window closed callback
   -> (k -> Gtk.WidgetKeyPressEventCallback)
        -- ^ window keypress callback
-  -> TVar (GlobalState k)
   -> k
-  -> IO WindowState
-getOrCreateWindowState mkWindowTitle onWindowClosed onWindowKeyPress globalTVar k = do
-  globalState <- atomically $ readTVar globalTVar
-  case Map.lookup k globalState of
+  -> StateT (Map k WindowState) IO WindowState
+getOrCreateWindowState mkWindowTitle onWindowClosed onWindowKeyPress k = do
+  State.gets (Map.lookup k) >>= \case
     Just windowState -> do
       pure windowState
     Nothing -> do
-      windowState <- newWindowState
+      windowState <- liftIO $ newWindowState
         (mkWindowTitle k)
         (onWindowClosed k)
         (onWindowKeyPress k)
-      atomically $ do
-        modifyTVar globalTVar $ Map.insert k windowState
+      State.modify $ Map.insert k windowState
       pure windowState
 
-newHandle
+newActor
   :: forall k. Ord k
   => (k -> String)
        -- ^ window title
-  -> (Handle k -> k -> Gtk.WidgetDestroyCallback)
+  -> (k -> Gtk.WidgetDestroyCallback)
        -- ^ window closed callback
-  -> (Handle k -> k -> Gtk.WidgetKeyPressEventCallback)
+  -> (k -> Gtk.WidgetKeyPressEventCallback)
        -- ^ window keypress callback
-  -> (Handle k -> k -> Int -> Gtk.WidgetKeyPressEventCallback)
+  -> (k -> Int -> Gtk.WidgetKeyPressEventCallback)
        -- ^ entry keypress callback
-  -> IO (Handle k)
-newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
+  -> IO (RunApp, Actor (Msg k))
+newActor mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = do
   _ <- Gtk.init Nothing
 
-  globalTVar <- newTVarIO Map.empty
-  let getOrCreateWindowState' :: k -> IO WindowState
+  let getOrCreateWindowState' :: k -> StateT (Map k WindowState) IO WindowState
       getOrCreateWindowState'
         = getOrCreateWindowState
             mkWindowTitle
-            (onWindowClosed handle)  -- tie the knot
-            (onWindowKeyPress handle)  -- tie the knot
-            globalTVar
+            onWindowClosed
+            onWindowKeyPress
 
   -- (-1) or current count or bigger to append at the end
-  let insertEntry :: k -> Int -> Entry -> IO ()
+  let insertEntry :: k -> Int -> Entry -> StateT (Map k WindowState) IO ()
       insertEntry k i entry = do
         WindowState
           { windowListBox = listBox
-          , windowLabels = labelsTVar
+          , windowLabels = labels
           } <- getOrCreateWindowState' k
-        n <- atomically $ length <$> readTVar labelsTVar
+        let n = length labels
         let s = entryText entry
         let g = entryGreyedOut entry
         let i' = if i < 0 then n else i
@@ -124,20 +120,19 @@ newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
           [ #label := fromString s
           , #sensitive := not g
           ]
-        _ <- on label #keyPressEvent (onEntryKeyPress handle k i)
+        _ <- on label #keyPressEvent (onEntryKeyPress k i)
         Gtk.listBoxInsert listBox label (fromIntegral i)
         #show label
 
-        atomically $ modifyTVar labelsTVar $ Seq.insertAt i' label
+        ix k % #windowLabels %= Seq.insertAt i' label
 
   -- noop if there is no entry at that position
-  let setEntry :: k -> Int -> Entry -> IO ()
+  let setEntry :: k -> Int -> Entry -> StateT (Map k WindowState) IO ()
       setEntry k i entry = do
-        globalState <- atomically $ readTVar globalTVar
-        for_ (Map.lookup k globalState) $ \(WindowState
-                                              { windowLabels = labelsTVar
-                                              }) -> do
-          labels <- atomically $ readTVar labelsTVar
+        maybeWindowState <- State.gets (Map.lookup k)
+        for_ maybeWindowState $ \(WindowState
+                                    { windowLabels = labels
+                                    }) -> do
           for_ (Seq.lookup i labels) $ \label -> do
             let s = entryText entry
             let g = entryGreyedOut entry
@@ -147,24 +142,29 @@ newHandle mkWindowTitle onWindowClosed onWindowKeyPress onEntryKeyPress = mdo
               ]
 
   -- noop if there is no entry at that position
-  let removeEntry :: k -> Int -> IO ()
+  let removeEntry :: k -> Int -> StateT (Map k WindowState) IO ()
       removeEntry k i = do
-        globalState <- atomically $ readTVar globalTVar
-        for_ (Map.lookup k globalState) $ \(WindowState
-                                              { windowListBox = listBox
-                                              , windowLabels = labelsTVar
-                                              }) -> do
-          labels <- atomically $ readTVar labelsTVar
+        maybeWindowState <- State.gets (Map.lookup k)
+        for_ maybeWindowState $ \(WindowState
+                                    { windowListBox = listBox
+                                    , windowLabels = labels
+                                    }) -> do
           for_ (Seq.lookup i labels) $ \label -> do
             Gtk.containerRemove listBox label
-            atomically $ modifyTVar labelsTVar $ Seq.deleteAt i
+            ix k % #windowLabels %= Seq.deleteAt i
 
-  let handle :: Handle k
-      handle = Handle
-        { insertEntry
-        , setEntry
-        , removeEntry
-        , runApp = Gtk.main
-        , quitApp = Gtk.mainQuit
-        }
-  pure handle
+  let actor :: Actor (Msg k)
+      actor = statefulActor Map.empty $ \case
+        InsertEntry k i entry request -> do
+          insertEntry k i entry
+          liftIO $ respond request ()
+        SetEntry k i entry request -> do
+          setEntry k i entry
+          liftIO $ respond request ()
+        RemoveEntry k i request -> do
+          removeEntry k i
+          liftIO $ respond request ()
+        QuitApp request -> do
+          Gtk.mainQuit
+          liftIO $ respond request ()
+  pure (Gtk.main, actor)

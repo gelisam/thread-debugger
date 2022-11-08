@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedLabels, RankNTypes #-}
 module Main where
 
 import Control.Concurrent.STM
@@ -8,8 +8,9 @@ import qualified GI.Gdk.Constants as Gdk
 import qualified GI.Gtk as Gtk
 
 
-import Handle
+import Actor
 import Impl
+import Msg
 
 
 exampleInput
@@ -30,17 +31,17 @@ mkWindowTitle _
   = "main"
 
 onWindowClosed
-  :: Handle Key -> Key -> Gtk.WidgetDestroyCallback
-onWindowClosed handle _ = do
-  quitApp handle
+  :: SendFunction (Msg Key) -> Key -> Gtk.WidgetDestroyCallback
+onWindowClosed send _ = do
+  send QuitApp
 
 onWindowKeyPress
-  :: TVar Int -> Handle Key -> Key -> Gtk.WidgetKeyPressEventCallback
-onWindowKeyPress timeTVar handle k eventKey = do
+  :: TVar Int -> SendFunction (Msg Key) -> Key -> Gtk.WidgetKeyPressEventCallback
+onWindowKeyPress timeTVar send k eventKey = do
   eventKeyval <- get eventKey #keyval
   case eventKeyval of
     Gdk.KEY_Escape -> do
-      quitApp handle
+      send QuitApp
       pure True
     Gdk.KEY_Left -> do
       time <- atomically $ readTVar timeTVar
@@ -53,7 +54,7 @@ onWindowKeyPress timeTVar handle k eventKey = do
                 , entryGreyedOut
                     = True
                 }
-          setEntry handle k time' entry
+          send $ SetEntry k time' entry
           atomically $ writeTVar timeTVar time'
           pure True
         else do
@@ -70,7 +71,7 @@ onWindowKeyPress timeTVar handle k eventKey = do
                 , entryGreyedOut
                     = False
                 }
-          setEntry handle k time entry
+          send $ SetEntry k time entry
           atomically $ writeTVar timeTVar time'
           pure True
         else do
@@ -80,7 +81,7 @@ onWindowKeyPress timeTVar handle k eventKey = do
       pure False
 
 onEntryKeyPress
-  :: Handle Key -> Key -> Int -> Gtk.WidgetKeyPressEventCallback
+  :: SendFunction (Msg Key) -> Key -> Int -> Gtk.WidgetKeyPressEventCallback
 onEntryKeyPress _ _ _ _ = do
   pure False
 
@@ -88,19 +89,19 @@ main :: IO ()
 main = do
   timeTVar <- newTVarIO (length exampleInput)
 
-  handle <- newHandle
-    mkWindowTitle
-    onWindowClosed
-    (onWindowKeyPress timeTVar)
-    onEntryKeyPress
-
-  for_ (zip [0..] exampleInput) $ \(i, s) -> do
-    let entry = Entry
-          { entryText
-              = s
-          , entryGreyedOut
-              = False
-          }
-    insertEntry handle () i entry
-
-  runApp handle
+  withTwoStepActor $ \send -> do
+    (runApp, actor) <- newActor
+      mkWindowTitle
+      (onWindowClosed send)
+      (onWindowKeyPress timeTVar send)
+      (onEntryKeyPress send)
+    pure $ (,) actor $ do
+      for_ (zip [0..] exampleInput) $ \(i, s) -> do
+        let entry = Entry
+              { entryText
+                  = s
+              , entryGreyedOut
+                  = False
+              }
+        send $ InsertEntry () i entry
+      runApp
