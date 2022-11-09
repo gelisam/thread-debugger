@@ -26,9 +26,11 @@ executable thread-debugger
 
     -- Modules included in this executable, other than Main.
     other-modules:    Actor
+                    , GUI.Impl
+                    , GUI.Msg
                     , History
-                    , Impl
-                    , Msg
+                    , Logs.Impl
+                    , Logs.Msg
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -40,7 +42,6 @@ executable thread-debugger
                     , gi-gtk
                     , haskell-gi-base
                     , optics
-                    , stm
                     , transformers
     hs-source-dirs:   app
     default-language: Haskell2010

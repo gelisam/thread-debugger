@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Msg where
+module GUI.Msg where
 
 import GHC.Generics (Generic)
 

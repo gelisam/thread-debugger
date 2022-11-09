@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedLabels, RankNTypes #-}
 module Main where
 
-import Control.Concurrent.STM
 import Data.Foldable (for_)
 import Data.GI.Base
 import qualified GI.Gdk.Constants as Gdk
@@ -9,8 +8,10 @@ import qualified GI.Gtk as Gtk
 
 
 import Actor
-import Impl
-import Msg
+import qualified GUI.Impl as GUI
+import qualified GUI.Msg as GUI
+import qualified Logs.Impl as Logs
+import qualified Logs.Msg as Logs
 
 
 exampleInput
@@ -23,85 +24,57 @@ exampleInput
     , "B baz"
     ]
 
-type Key = ()
-
 mkWindowTitle
-  :: Key -> String
+  :: Logs.Key
+  -> String
 mkWindowTitle _
   = "main"
 
 onWindowClosed
-  :: SendFunction (Msg Key) -> Key -> Gtk.WidgetDestroyCallback
-onWindowClosed send _ = do
-  send QuitApp
+  :: SendFunction (GUI.Msg Logs.Key)
+  -> Logs.Key
+  -> Gtk.WidgetDestroyCallback
+onWindowClosed sendGui _ = do
+  sendGui GUI.QuitApp
 
 onWindowKeyPress
-  :: TVar Int -> SendFunction (Msg Key) -> Key -> Gtk.WidgetKeyPressEventCallback
-onWindowKeyPress timeTVar send k eventKey = do
+  :: SendFunction (GUI.Msg Logs.Key)
+  -> SendFunction Logs.Msg
+  -> Logs.Key
+  -> Gtk.WidgetKeyPressEventCallback
+onWindowKeyPress sendGui sendLogs _ eventKey = do
   eventKeyval <- get eventKey #keyval
   case eventKeyval of
     Gdk.KEY_Escape -> do
-      send QuitApp
+      sendGui GUI.QuitApp
       pure True
     Gdk.KEY_Left -> do
-      time <- atomically $ readTVar timeTVar
-      if time > 0
-        then do
-          let time' = time - 1
-          let entry = Entry
-                { entryText
-                    = exampleInput !! time'
-                , entryGreyedOut
-                    = True
-                }
-          send $ SetEntry k time' entry
-          atomically $ writeTVar timeTVar time'
-          pure True
-        else do
-          pure False
+      sendLogs Logs.Prev
     Gdk.KEY_Right -> do
-      time <- atomically $ readTVar timeTVar
-      let n = length exampleInput
-      if time < n
-        then do
-          let time' = time + 1
-          let entry = Entry
-                { entryText
-                    = exampleInput !! time
-                , entryGreyedOut
-                    = False
-                }
-          send $ SetEntry k time entry
-          atomically $ writeTVar timeTVar time'
-          pure True
-        else do
-          pure False
+      sendLogs Logs.Next
     _ -> do
       --print eventKeyval
       pure False
 
 onEntryKeyPress
-  :: SendFunction (Msg Key) -> Key -> Int -> Gtk.WidgetKeyPressEventCallback
+  :: SendFunction (GUI.Msg Logs.Key)
+  -> Logs.Key
+  -> Int
+  -> Gtk.WidgetKeyPressEventCallback
 onEntryKeyPress _ _ _ _ = do
   pure False
 
 main :: IO ()
 main = do
-  timeTVar <- newTVarIO (length exampleInput)
-
-  withTwoStepActor $ \send -> do
-    (runApp, actor) <- newActor
-      mkWindowTitle
-      (onWindowClosed send)
-      (onWindowKeyPress timeTVar send)
-      (onEntryKeyPress send)
-    pure $ (,) actor $ do
-      for_ (zip [0..] exampleInput) $ \(i, s) -> do
-        let entry = Entry
-              { entryText
-                  = s
-              , entryGreyedOut
-                  = False
-              }
-        send $ InsertEntry () i entry
-      runApp
+  withTwoStepActor $ \sendGui cc -> do
+    logsActor <- Logs.newActor sendGui
+    withActor logsActor $ \sendLogs -> do
+      (runApp, guiActor) <- GUI.newActor
+        mkWindowTitle
+        (onWindowClosed sendGui)
+        (onWindowKeyPress sendGui sendLogs)
+        (onEntryKeyPress sendGui)
+      cc guiActor $ do
+        for_ exampleInput $ \entry -> do
+          sendLogs $ Logs.AppendEntry entry
+        runApp

@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, LambdaCase, NamedFieldPuns, OverloadedLabels, ScopedTypeVariables #-}
-module Impl (newActor) where
+module GUI.Impl (newActor) where
 
 import Optics ((%), ix)
 import Optics.State.Operators ((%=))
@@ -17,7 +17,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Map as Map
 
 import Actor
-import Msg
+import GUI.Msg
 
 
 data WindowState = WindowState

@@ -61,18 +61,22 @@ withActor
   -> (SendFunction msg -> IO r)
   -> IO r
 withActor actor0 body = do
-  let mkActorAndBody :: SendFunction msg -> IO (Actor msg, IO r)
-      mkActorAndBody sendFunction = do
-        pure (actor0, body sendFunction)
-  withTwoStepActor mkActorAndBody
+  withTwoStepActor $ \sendFunction cc -> do
+    cc actor0 $ do
+      body sendFunction
 
 -- a variant of 'withActor' which gives you the 'SendFunction' early, so you
 -- can construct actors which call each other.
 withTwoStepActor
   :: forall msg r
-   . (SendFunction msg -> IO (Actor msg, IO r))
+   . ( forall r'
+     . SendFunction msg
+    -> ( (Actor msg -> IO r -> IO r')
+      -> IO r'
+       )
+     )
   -> IO r
-withTwoStepActor mkActorAndBody = do
+withTwoStepActor outerBody = do
   msgMVar <- newEmptyMVar
   actorMVar <- newEmptyMVar
   let runActor :: Actor msg -> IO Void
@@ -94,7 +98,7 @@ withTwoStepActor mkActorAndBody = do
             pure a
           Right void -> do
             absurd void
-  (actor0, body) <- mkActorAndBody sendFunction
-  withAsync (runActor actor0) $ \actorAsync -> do
-    putMVar actorMVar actorAsync
-    body
+  outerBody sendFunction $ \actor0 innerBody -> do
+    withAsync (runActor actor0) $ \actorAsync -> do
+      putMVar actorMVar actorAsync
+      innerBody
